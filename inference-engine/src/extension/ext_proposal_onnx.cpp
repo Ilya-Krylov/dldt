@@ -18,26 +18,18 @@
 
 
 namespace {
-struct Indexer {
-  const std::vector<int> dims_;
-  int total_{1};
+struct Indexer4d {
+  int dim3_;
+  int dim23_;
+  int dim123_;
 
-  explicit Indexer(const std::vector<int>& dims) : dims_(dims) {
-      total_ = 1;
-      for (size_t i = 0; i < dims_.size(); ++i) {
-          total_ *= dims_[i];
-      }
+  explicit Indexer4d(int dim0, int dim1, int dim2, int dim3):
+      dim3_(dim3), dim23_(dim2 * dim3), dim123_(dim1 * dim2 * dim3) {
+      (void)dim0;
   }
 
-  const int operator()(const std::vector<int>& idx) const {
-      int flat_idx = 0;
-      assert(idx.size() == dims_.size());
-      for (size_t i = 0; i < dims_.size(); ++i) {
-          assert(0 <= idx[i] && idx[i] < dims_[i]);
-          flat_idx = flat_idx * dims_[i] + idx[i];
-      }
-      assert(flat_idx < total_);
-      return flat_idx;
+  int operator()(int i, int j, int k, int n) const {
+      return  i * dim123_ + j * dim23_ + k * dim3_ + n;
   }
 };
 }  // namespace
@@ -54,24 +46,25 @@ void refine_anchors(const float* deltas, const float* scores, const float* ancho
                     const float min_box_H, const float min_box_W,
                     const float max_delta_log_wh,
                     float coordinates_offset) {
-    Indexer delta_idx({anchors_num, 4, bottom_H, bottom_W});
-    Indexer score_idx({anchors_num, 1, bottom_H, bottom_W});
-    Indexer proposal_idx({bottom_H, bottom_W, anchors_num, 5});
-    Indexer anchor_idx({bottom_H, bottom_W, anchors_num, 4});
+    Indexer4d delta_idx(anchors_num, 4, bottom_H, bottom_W);
+    Indexer4d score_idx(anchors_num, 1, bottom_H, bottom_W);
+    Indexer4d proposal_idx(bottom_H, bottom_W, anchors_num, 5);
+    Indexer4d anchor_idx(bottom_H, bottom_W, anchors_num, 4);
 
     parallel_for2d(bottom_H, bottom_W, [&](int h, int w) {
             for (int anchor = 0; anchor < anchors_num; ++anchor) {
-                float x0 = anchors[anchor_idx({h, w, anchor, 0})];
-                float y0 = anchors[anchor_idx({h, w, anchor, 1})];
-                float x1 = anchors[anchor_idx({h, w, anchor, 2})];
-                float y1 = anchors[anchor_idx({h, w, anchor, 3})];
+                int a_idx = anchor_idx(h, w, anchor, 0);
+                float x0 = anchors[a_idx + 0];
+                float y0 = anchors[a_idx + 1];
+                float x1 = anchors[a_idx + 2];
+                float y1 = anchors[a_idx + 3];
 
-                const float dx = deltas[delta_idx({anchor, 0, h, w})];
-                const float dy = deltas[delta_idx({anchor, 1, h, w})];
-                const float d_log_w = deltas[delta_idx({anchor, 2, h, w})];
-                const float d_log_h = deltas[delta_idx({anchor, 3, h, w})];
+                const float dx = deltas[delta_idx(anchor, 0, h, w)];
+                const float dy = deltas[delta_idx(anchor, 1, h, w)];
+                const float d_log_w = deltas[delta_idx(anchor, 2, h, w)];
+                const float d_log_h = deltas[delta_idx(anchor, 3, h, w)];
 
-                const float score = scores[score_idx({anchor, 0, h, w})];
+                const float score = scores[score_idx(anchor, 0, h, w)];
 
                 // width & height of box
                 const float ww = x1 - x0 + coordinates_offset;
@@ -104,11 +97,12 @@ void refine_anchors(const float* deltas, const float* scores, const float* ancho
                 const float box_w = x1 - x0 + coordinates_offset;
                 const float box_h = y1 - y0 + coordinates_offset;
 
-                proposals[proposal_idx({h, w, anchor, 0})] = x0;
-                proposals[proposal_idx({h, w, anchor, 1})] = y0;
-                proposals[proposal_idx({h, w, anchor, 2})] = x1;
-                proposals[proposal_idx({h, w, anchor, 3})] = y1;
-                proposals[proposal_idx({h, w, anchor, 4})] = (min_box_W <= box_w) * (min_box_H <= box_h) * score;
+                int p_idx = proposal_idx(h, w, anchor, 0);
+                proposals[p_idx + 0] = x0;
+                proposals[p_idx + 1] = y0;
+                proposals[p_idx + 2] = x1;
+                proposals[p_idx + 3] = y1;
+                proposals[p_idx + 4] = (min_box_W <= box_w) * (min_box_H <= box_h) * score;
             }
     });
 }
